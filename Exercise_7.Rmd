@@ -1,0 +1,183 @@
+---
+title: "Exercise 7"
+author: "Baily"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE)
+packages_needed <- c("ggplot2",
+                     "patchwork",
+                     "MuMIn"
+                     )
+pk_to_install <- packages_needed [!( packages_needed %in% rownames(installed.packages())  )]
+if(length(pk_to_install)>0 ){
+  install.packages(pk_to_install,repos="http://cran.r-project.org")
+}
+#lapply(packages_needed, require, character.only = TRUE)
+library(ggplot2)
+library(patchwork)
+library(MuMIn)
+```
+
+```{r data insert}
+frogs <- read.csv("frogs.csv")
+
+
+```
+
+```{r adjust width of console outputs}
+options(width = 90)
+```
+
+
+Response: pres.abs
+Predictor varibles: Altitude, distance, NoOfPools, NoOfSites, avrain 
+```{r fig.height=8, fig.width=8}
+#check for co-linearity among the four predictor variables
+pairs(frogs[,5:9], lower.panel = NULL) #use all rows of columns 5 through 9
+```
+
+
+One very important thing you should do next is change the global options for how R functions handle missing data. By making this change, a function will not work if data are missing. This is required if you use the `dredge` function for exploratory data analysis.
+```{r}
+# change na. action
+options(na.action = "na.fail")
+```
+
+
+
+```{r}
+#First, fit 4 candidate linear models to explain variation in density
+mod1<-lm(pres.abs~distance+altitude, data = frogs)
+mod2<-lm(pres.abs~NoOfPools+altitude, data = frogs)
+mod3<-lm(pres.abs~NoOfPools+distance, data = frogs)
+mod4<-lm(pres.abs~NoOfPools+distance+altitude, data = frogs)
+
+```
+
+
+
+We can now use the `model.sel` function to conduct model selection. The default model selection criteria is Akaike’s information criteria (AIC) with small sample bias adjustment, AIC~c~. Here we’ll create an object `out.put` that contains all of the model selection information.
+```{r}
+# use the model.sel function to conduct model selection
+# and put output into object out.put
+out.put<-model.sel(mod1,mod2,mod3,mod4)
+out.put
+```
+The models are sorted from best (top) to worst (bottom). Looks like `mod4`, containing an intercept (Int), distance (dstnc), altitude (alttd), and number of pools(NOfPl)) is best with a weight of 0.984. It is 0.984/0.012 = 82 times more likely to be the best explanation (hypothesis) for variation in density. 
+
+Here we can use the `subset` function to select the models that meet the criteria. Note that the weights are re-normalized for the models selected. That is, they are adjusted so that they add to one. not very helpful.
+```{r create subset of all models}
+# create a confidence set of models using the subset function
+# select models with delta AICc less than 5
+# IMPORTANT: Weights have been renormalized!!
+subset(out.put, delta <5)
+```
+```{r Royall}
+# select models using Royall's 1/8 rule for strength of evidence
+#https://www.stat.fi/isi99/proceedings/arkisto/varasto/roya0578.pdf
+# IMPORTANT: Weights have been renormalized!!
+subset(out.put, 1/8 < weight/max(out.put$weight))
+```
+Not much different than delta < 5 above. Let’s try another criteria based on the cumulative sum of the model weights.
+```{r}
+# select models 95% cumulative weight criteria
+# IMPORTANT: Weights have been renormalized!!
+subset(out.put, cumsum(out.put$weight) <= 1)
+```
+In most circumstances, you would like to include model selection results in a table in a report, publication, or thesis. Here, we need to coerce the output from the `model.sel` function into a dataframe. The first c elements of that data frame contain what we want. How do I know that? I first created the dataframe and used the “str” function to see what elements were in the dataframe.
+```{r}
+# coerce the object out.put into a data frame
+# elements 6-10 in out.put have what we want
+sel.table<-as.data.frame(out.put)[5:9]
+sel.table
+```
+This is a bit messy and not ready for any report. Let’s clean this up a bit -- first by rounding.
+```{r adjusting sig digits}
+# a little clean-up, lets round things a bit
+sel.table[,2:3]<- round(sel.table[,2:3],2)
+sel.table[,4:5]<- round(sel.table[,4:5],3)
+sel.table
+# that’s better
+```
+
+
+
+
+```{r}
+# model selection table; sorted by BIC
+model.sel(mod1,mod2,mod3,mod4, rank = BIC)
+```
+
+```{r}
+#consistent AIC with Fishers information matrix
+model.sel(mod1,mod2,mod3,mod4, rank = CAICF) 
+```
+There also are `MuMin` functions for calculating model selection criteria, such as AIC, AIC~c~, BIC and Mallows Cp, an ad hoc model selection criterion, not recommended. Here lets only compare two models using AIC.
+```{r compare models with AIC}
+#AIC
+AIC(mod1,mod2)
+```
+Note that above, the df is actually the number of model parameters, usually defined as K.
+
+The **relative importance of individual parameters** can also be examined using the model weights. Here, the Akaike weights for each model that contains the parameter of interest are summed. These have been defined as importance weights and you can obtain them from a `model.sel` object using the “importance” function.
+```{r Importance weights for individual predictor variables}
+# Importance weights for individual predictor variables
+# calculated using the `sw` function
+
+sw(out.put) #Per-variable sum of model weights
+```
+
+```{r Model Averaging}
+# Model average using all candidate models, always use revised.var = TRUE
+MA.ests<-model.avg(out.put, revised.var = TRUE)
+MA.ests
+```
+Another useful `MuMIn` function is `dredge`. However, you should only use is for exploratory purposes. Data dredging is strongly discouraged and can result in spurious (and irrelevant or worse, wrong) results and inference. So read the message below and users beware.
+```{r All parameters model}
+## FOR EXPLORATORY PURPOSES ONLY!!! NEVER EVER DO THIS FOR A REAL
+## STUDY
+# fit model with all parameters
+all.parms<-lm(pres.abs~NoOfPools+distance+altitude, data = frogs)
+
+# the dredge function fits all combinations
+# of the variables in the all.parms model fit above
+results<-dredge(all.parms)
+results
+```
+
+```{r}
+# grab best supported models
+subset(results, delta <5)
+```
+
+```{r}
+#grab best model
+subset(results, delta == 0)
+```
+
+```{r}
+# calculate variable importance weights
+sw(results)
+```
+Notice above that every parameter is in the same number of models.
+
+```{r make a figure using best-fit model, message=FALSE, warning=FALSE}
+p1 <- ggplot(frogs, aes(distance, pres.abs, colour = altitude)) + 
+  geom_point() +
+  geom_smooth(method="lm")+
+  scale_x_continuous(limits = c(200,550))
+
+p2 <- ggplot(frogs, aes(altitude, pres.abs, colour = distance)) + 
+  geom_point() +
+  geom_smooth(method="lm") +
+  scale_colour_gradientn(colours = terrain.colors(10, rev=TRUE)) +
+  scale_x_continuous(limits = c(1200,1900))                         
+
+p1+p2
+```
+
